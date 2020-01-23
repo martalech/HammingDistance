@@ -10,10 +10,11 @@
 #include <iterator>
 #include <set>
 
-constexpr unsigned long long kNumberOfBits = 3;
-constexpr unsigned long long kNumberOfSequences = 30000;
+constexpr unsigned long long kNumberOfBits = 1000;
+constexpr unsigned long long kNumberOfSequences = 10000;
 constexpr unsigned long long kNumberOfPairs = (kNumberOfSequences * (kNumberOfSequences - 1)) / 2;
-constexpr bool comparePairs = false;
+constexpr double kSequencePercent = 0.3;
+constexpr bool comparePairs = true;
 constexpr bool printSequences = false;
 
 class Sequence {
@@ -43,6 +44,8 @@ __global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long l
 	unsigned long long offset = 0);
 __global__ void hammingGPUPairs(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset = 0);
+__host__ __device__ inline void setBit(char* array, unsigned long long index, char value);
+__host__ __device__ inline char getBit(char* array, unsigned long long index);
 
 __global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset) {
@@ -217,6 +220,19 @@ void generateInput(Sequence* bits) {
 		}
 		*getWord(bits[i].getBytes(), kNumberOfBits / 64) = random() >> (64 - (kNumberOfBits % 64));
 	}
+	std::uniform_int_distribution<unsigned long long> distribution(0, kNumberOfSequences - 1);
+	for (int i = 0; i < kSequencePercent * kNumberOfSequences; i++) {
+		unsigned long long s1, s2;
+		s1 = distribution(random);
+		s2 = distribution(random);
+		for (int j = 0; j < kNumberOfBits / 64; j++) {
+			*getWord(bits[s2].getBytes(), j) = *getWord(bits[s1].getBytes(), j);
+		}
+		*getWord(bits[s2].getBytes(), kNumberOfBits / 64) = 
+			*getWord(bits[s1].getBytes(), kNumberOfBits / 64);
+		char bit = getBit(bits[s1].getBytes(), kNumberOfBits - 1) == 1 ? 0 : 1;
+		setBit(bits[s2].getBytes(), kNumberOfBits - 1, bit);
+	}
 }
 
 void printSequence(Sequence& sequence) {
@@ -251,4 +267,14 @@ __host__ __device__ inline void k2ij(unsigned long long  k, unsigned long long* 
 
 __host__ __device__ unsigned long long ij2k(unsigned long long i, unsigned long long j) {
 	return i * (i - 1) / 2 + j;
+}
+
+__host__ __device__ inline void setBit(char* array, unsigned long long index, char value)
+{
+	array[index / 8] = (array[index / 8] & (~(1 << (index % 8)))) | ((!!value) << (index % 8));
+}
+
+__host__ __device__ inline char getBit(char* array, unsigned long long index)
+{
+	return array[index / 8] >> (index % 8) & 1;
 }
