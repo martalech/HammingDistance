@@ -11,7 +11,7 @@
 #include <set>
 
 constexpr unsigned long long kNumberOfBits = 3;
-constexpr unsigned long long kNumberOfSequences = 20000;
+constexpr unsigned long long kNumberOfSequences = 30000;
 constexpr unsigned long long kNumberOfPairs = (kNumberOfSequences * (kNumberOfSequences - 1)) / 2;
 constexpr bool comparePairs = false;
 constexpr bool printSequences = false;
