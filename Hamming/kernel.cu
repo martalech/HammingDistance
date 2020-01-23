@@ -7,10 +7,14 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <iterator>
+#include <set>
 
-constexpr unsigned long long kNumberOfBits = 10;
-constexpr unsigned long long kNumberOfSequences = 10000;
+constexpr unsigned long long kNumberOfBits = 3;
+constexpr unsigned long long kNumberOfSequences = 20000;
 constexpr unsigned long long kNumberOfPairs = (kNumberOfSequences * (kNumberOfSequences - 1)) / 2;
+constexpr bool comparePairs = false;
+constexpr bool printSequences = false;
 
 class Sequence {
 	char bytes[(kNumberOfBits / 64 + (!!(kNumberOfBits % 64))) * 8];
@@ -30,60 +34,34 @@ public:
 
 void generateInput(Sequence* bits);
 void printSequence(Sequence& sequence);
+std::vector<std::pair<unsigned long long, unsigned long long>> getPairs(char* results, unsigned long long* sum);
 __host__ __device__ unsigned long long* getWord(char* bits, unsigned long long j);
-__host__ __device__ unsigned long long* getWord32(char* bits, unsigned long long j);
 __host__ __device__ char checkDistance(Sequence& sequence1, Sequence& sequence2, unsigned long long nrOfBits);
 __host__ __device__ inline void k2ij(unsigned long long  k, unsigned long long* i, unsigned long long* j);
 __host__ __device__ unsigned long long ij2k(unsigned long long i, unsigned long long j);
-__host__ __device__ inline void SetBit(char* array, unsigned long long index, char value)
-{
-	array[index / 8] = (array[index / 8] & (~(1 << (index % 8)))) | ((!!value) << (index % 8));
-}
-__host__ __device__ inline char GetBit(char* array, unsigned long long index)
-{
-	return array[index / 8] >> (index % 8) & 1;
-}
-__global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long long nrOfSeq, unsigned long long nrOfBits,
+__global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset = 0);
-__global__ void hammingGPUPairs(Sequence* d_sequences, char* results, unsigned long long nrOfSeq, unsigned long long nrOfBits,
+__global__ void hammingGPUPairs(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset = 0);
 
-//naprawiæ tooo:
-__global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long long nrOfSeq, unsigned long long nrOfBits,
+__global__ void hammingGPU(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset) {
 	unsigned long long threadId = threadIdx.x + blockIdx.x * blockDim.x + offset;
 	for (unsigned long long i = 0; i < threadId; i++) {
-		//SetBit(results->getBytes(), ij2k(i, threadId), checkDistance(d_sequences[threadId], d_sequences[i], nrOfBits));
 		results[ij2k(threadId, i)] = checkDistance(d_sequences[threadId], d_sequences[i], nrOfBits);
 	}
 }
 
-__global__ void hammingGPUPairs(Sequence* d_sequences, char* results, unsigned long long nrOfSeq, unsigned long long nrOfBits,
+__global__ void hammingGPUPairs(Sequence* d_sequences, char* results, unsigned long long nrOfBits,
 	unsigned long long offset) {
 	unsigned long long threadId = threadIdx.x + blockIdx.x * blockDim.x + offset;
-		//SetBit(results->getBytes(), ij2k(i, threadId), checkDistance(d_sequences[threadId], d_sequences[i], nrOfBits));
 	unsigned long long s1, s2;
 	k2ij(threadId, &s1, &s2);
 	results[threadId] = checkDistance(d_sequences[s1], d_sequences[s2], nrOfBits);
 }
 
-std::vector<std::pair<unsigned long long, unsigned long long>> getPairs(char* results, unsigned long long* sum) {
-	*sum = 0;
-	std::vector<std::pair<unsigned long long, unsigned long long>> pairs;
-	for (int i = 0; i < kNumberOfPairs; i++) {
-		if (results[i] == 1) {
-			unsigned long long s1, s2;
-			k2ij(i, &s1, &s2);
-			if (s1 != s2) {
-				*sum += 1;
-				pairs.push_back(std::make_pair(s1, s2));
-			}
-		}
-	}
-	return pairs;
-}
-
 auto pairsGPU(Sequence* h_sequence) {
+	std::cout << std::endl << "Finding pairs on GPU.." << std::endl;
 	Sequence* d_sequence;
 	char *h_results, *d_results;
 	h_results = new char[kNumberOfPairs];
@@ -97,41 +75,37 @@ auto pairsGPU(Sequence* h_sequence) {
 	cudaEventCreate(&stop);
 	cudaEventRecord(start);
 	cudaEventSynchronize(start);
-	//hammingGPUPairs << < kNumberOfPairs / 1024, 1024 >> > (d_sequence, d_results, kNumberOfSequences, kNumberOfBits);
-	//if (kNumberOfPairs % 1024) {
-	//	hammingGPUPairs << < 1, kNumberOfPairs % 1024 >> > (d_sequence, d_results, kNumberOfSequences, kNumberOfBits,
-	//		kNumberOfPairs - kNumberOfPairs % 1024);
-	//}
-	hammingGPU << < kNumberOfSequences / 1024, 1024 >> > (d_sequence, d_results, kNumberOfSequences, kNumberOfBits);
-	if (kNumberOfSequences % 1024) {
-		hammingGPU << < 1, kNumberOfSequences % 1024 >> > (d_sequence, d_results, kNumberOfSequences, kNumberOfBits,
-			kNumberOfSequences - kNumberOfSequences % 1024);
+
+	if (comparePairs) {
+		hammingGPUPairs << < kNumberOfPairs / 1024, 1024 >> > (d_sequence, d_results, kNumberOfBits);
+		if (kNumberOfPairs % 1024) {
+			hammingGPUPairs << < 1, kNumberOfPairs % 1024 >> > (d_sequence, d_results, kNumberOfBits,
+				kNumberOfPairs - kNumberOfPairs % 1024);
+		}
 	}
+	else {
+		hammingGPU << < kNumberOfSequences / 1024, 1024 >> > (d_sequence, d_results, kNumberOfBits);
+		if (kNumberOfSequences % 1024) {
+			hammingGPU << < 1, kNumberOfSequences % 1024 >> > (d_sequence, d_results, kNumberOfBits,
+				kNumberOfSequences - kNumberOfSequences % 1024);
+		}
+	}
+
 	cudaEventRecord(stop);
 	cudaEventSynchronize(stop);
 	float time;
 	cudaEventElapsedTime(&time, start, stop);
-
 	cudaMemcpy(h_results, d_results, sizeof(char) * kNumberOfPairs, cudaMemcpyDeviceToHost);
 
 	unsigned long long sum = 0;
 	const auto& pairs = getPairs(h_results, &sum);
-	for (const auto& pair : pairs) {
-		//std::cout << "Sequence 1: " << pair.first <<
-		//	", sequence 2: " << pair.second << std::endl;
-		std::cout << "Sequence 1: ";
-		printSequence(h_sequence[pair.first]);
-		std::cout << " , sequence 2: ";
-		printSequence(h_sequence[pair.second]);
-		int ret = checkDistance(h_sequence[pair.first], h_sequence[pair.second], kNumberOfBits);
-		std::cout << std::endl;
-	}
-	std::cout << "sum gpu: " << sum << ", time: " << time << std::endl;
+	std::cout << "Pairs found on GPU: " << sum << ", time elapsed: " <<
+		time << "ms" << std::endl;
 	return pairs;
 }
 
 auto pairsCPU(Sequence* sequences) {
-	Sequence* d_sequence;
+	std::cout << std::endl << "Finding pairs on CPU.." << std::endl;
 	char *results;
 	results = new char[kNumberOfPairs];
 	cudaEvent_t start, stop;
@@ -139,76 +113,101 @@ auto pairsCPU(Sequence* sequences) {
 	cudaEventCreate(&stop);
 	cudaEventRecord(start);
 	cudaEventSynchronize(start);
-	for (int i = 0; i < kNumberOfSequences; i++) {
-		for (int j = 0; j < i; j++) {
-			//SetBit(results->getBytes(), ij2k(j, i), checkDistance(sequences[i], sequences[j], kNumberOfBits));
-			results[ij2k(i, j)] = checkDistance(sequences[i], sequences[j], kNumberOfBits);
+	if (comparePairs) {
+		for (unsigned long long i = 0; i < kNumberOfPairs; i++) {
+			unsigned long long s1, s2;
+			k2ij(i, &s1, &s2);
+			results[i] = checkDistance(sequences[s1], sequences[s2], kNumberOfBits);
 		}
 	}
-	//for (unsigned long long i = 0; i < kNumberOfPairs; i++) {
-	//	unsigned long long s1, s2;
-	//	k2ij(i, &s1, &s2);
-	//	results[i] = checkDistance(sequences[s1], sequences[s2], kNumberOfBits);
-	//}
+	else {
+		for (int i = 0; i < kNumberOfSequences; i++) {
+			for (int j = 0; j < i; j++) {
+				results[ij2k(i, j)] = checkDistance(sequences[i], sequences[j], kNumberOfBits);
+			}
+		}
+	}
+
 	cudaEventRecord(stop);
 	cudaEventSynchronize(stop);
 	float time;
 	cudaEventElapsedTime(&time, start, stop);
 
 	unsigned long long sum = 0;
-	//std::vector<std::pair<unsigned long long, unsigned long long>> pairs;
-	//for (int i = 0; i < kNumberOfPairs; i++) {
-	//	if ((short int)GetBit(results->getBytes(), i) == 1) {
-	//		sum += 1;
-	//		unsigned long long s1, s2;
-	//		k2ij(i, &s1, &s2);
-	//		pairs.push_back(std::make_pair(s1, s2));
-	//	}
-	//}
 	const auto& pairs = getPairs(results, &sum);
-	//for (const auto& pair : hmm) {
-	//	//std::cout << "Sequence 1: " << pair.first <<
-	//	//	", sequence 2: " << pair.second<< std::endl;
-	//	std::cout << "Sequence 1: ";
-	//	printSequence(sequences[pair.first]);
-	//	std::cout << " , sequence 2: ";
-	//	printSequence(sequences[pair.second]);
-	//	int ret = checkDistance(sequences[pair.first], sequences[pair.second], kNumberOfBits);
-	//	std::cout << std::endl;
-	//}
-
-	for (const auto& pair : pairs) {
-		//std::cout << "Sequence 1: " << pair.first <<
-		//	", sequence 2: " << pair.second<< std::endl;
-		//std::cout << "Sequence 1: ";
-		//printSequence(sequences[pair.first]);
-		//std::cout << " , sequence 2: ";
-		//printSequence(sequences[pair.second]);
-		//int ret = checkDistance(sequences[pair.first], sequences[pair.second], kNumberOfBits);
-		//std::cout << std::endl;
-	}
-	std::cout << "sum cpu: " << sum << ", time: " << time << std::endl;
+	std::cout << "Pairs found on CPU: " << sum << ", time elapsed: " <<
+		time << "ms" << std::endl;
 	return pairs;
 }
 
 int main() {
+	std::cout << "Finding pairs of " << kNumberOfBits << "-bit sequences with " <<
+		"Hamming distance equal to 1" << std::endl;
+	std::cout << "Number of sequences: " << kNumberOfSequences << std::endl;
+	std::cout << "Using algorithm: ";
+	if (comparePairs) {
+		std::cout << "comparing each pair";
+	}
+	else {
+		std::cout << "comparing each sequence iteratively";
+	}
+	std::cout << std::endl;
 	Sequence* sequences = new Sequence[kNumberOfSequences];
 	generateInput(sequences);
 	auto pairs1 = pairsCPU(sequences);
 	auto pairs2 = pairsGPU(sequences);
-	for (const auto& pair : pairs1) {
-		if (find(pairs2.begin(), pairs2.end(), pair) == pairs2.end()) {
-			std::cout << "pair not found in gpu: " << "s1: " << pair.first << " ";
+	//pairs2.push_back(std::make_pair(25ull, 56ull));
+	if (pairs1 != pairs2) {
+		std::cout << std::endl << "Returned pairs differ" << std::endl;
+		std::vector<std::pair<unsigned long long, unsigned long long>> diff;
+		std::set<std::pair<unsigned long long, unsigned long long>> set1(pairs1.begin(), pairs1.end()),
+			set2(pairs2.begin(), pairs2.end());
+		std::set_difference(set1.begin(), set1.end(), set2.begin(), set2.end(),
+			std::back_inserter(diff));
+		std::set_difference(set2.begin(), set2.end(), set1.begin(), set1.end(),
+			std::back_inserter(diff));
+		std::cout << "Mismatched pairs: " << std::endl;
+		for (const auto& pair : diff) {
+			std::cout << "Sequence 1: [" << pair.first << "] ";
 			printSequence(sequences[pair.first]);
-			std::cout << ", " << "s2: " << pair.second << " ";
+			std::cout << ", sequence 2: [" << pair.second << "] ";
 			printSequence(sequences[pair.second]);
 			std::cout << std::endl;
+		}
+	}
+	else {
+		std::cout << std::endl << "Returned pairs are the same" << std::endl;
+		if (printSequences) {
+			for (const auto& pair: pairs1) {
+				std::cout << "Sequence 1: [" << pair.first << "] ";
+				printSequence(sequences[pair.first]);
+				std::cout << ", sequence 2: [" << pair.second << "] ";
+				printSequence(sequences[pair.second]);
+				std::cout << std::endl;
+			}
 		}
 	}
     return 0;
 }
 
+std::vector<std::pair<unsigned long long, unsigned long long>> getPairs(char* results, unsigned long long* sum) {
+	*sum = 0;
+	std::vector<std::pair<unsigned long long, unsigned long long>> pairs;
+	for (int i = 0; i < kNumberOfPairs; i++) {
+		if (results[i] == 1) {
+			unsigned long long s1, s2;
+			k2ij(i, &s1, &s2);
+			if (s1 > s2) {
+				*sum += 1;
+				pairs.push_back(std::make_pair(s1, s2));
+			}
+		}
+	}
+	return pairs;
+}
+
 void generateInput(Sequence* bits) {
+	std::cout << std::endl << "Generating sequences.." << std::endl;
 	std::mt19937_64 random;
 	int seed = std::random_device()();
 	random.seed(seed);
@@ -226,14 +225,6 @@ void printSequence(Sequence& sequence) {
 	}
 }
 
-__host__ __device__ unsigned long long* getWord(char* bits, unsigned long long j) {
-	return (unsigned long long*)(bits + j * 64 / 8);
-}
-
-__host__ __device__ unsigned long long* getWord32(char* bits, unsigned long long j) {
-	return (unsigned long long*)(bits + j * 32 / 8);
-}
-
 __host__ __device__ char checkDistance(Sequence& sequence1, Sequence& sequence2, unsigned long long nrOfBits) {
 	int diff = 0;
 	for (int j = 0; j < (nrOfBits + 63) / 64; ++j) {
@@ -249,9 +240,13 @@ __host__ __device__ char checkDistance(Sequence& sequence1, Sequence& sequence2,
 	return !!diff;
 }
 
+__host__ __device__ unsigned long long* getWord(char* bits, unsigned long long j) {
+	return (unsigned long long*)(bits + j * 64 / 8);
+}
+
 __host__ __device__ inline void k2ij(unsigned long long  k, unsigned long long* i, unsigned long long* j) {
 	*i = (unsigned int)ceilf((0.5f * (-1 + sqrtf(1 + 8 * (k + 1)))));
-	*j = (unsigned int)((k + 1) - 0.5 * (*i) * ((*i) - 1)) - 1;
+	*j = (unsigned int)(((k + 1) - 0.5 * (*i) * ((*i) - 1)) - 1);
 }
 
 __host__ __device__ unsigned long long ij2k(unsigned long long i, unsigned long long j) {
